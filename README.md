@@ -30,26 +30,43 @@ pnpm dev      # the playground, on http://localhost:5173
 The playground puts the text on the left and the drawing on the right:
 
 - Type, and the drawing glides to its new layout.
-- Click a stacked box, or an arrow label with ›, to open it. `Esc` or the path at the top goes back.
+- Double-click a stacked box, or click its "inside ›", to open it. `Esc` or the path at the top goes back.
 - Hover a box or an arrow to light up its line. Put the cursor on a line to light up its box.
 - Mistakes show with a line, a column and a hint, and the rest still draws.
-- Your text is saved in the browser as you type.
+- Each diagram keeps your changes in this browser. **Reset** brings back the original.
+
+The mouse edits the text too, so you can draw instead of typing:
+
+| Do this | And the text gets |
+|---|---|
+| Drag a box | `at=x,y` on its line. No other box moves. |
+| Drag on empty space, or Shift-click | nothing yet: it selects boxes, like files on a desktop |
+| Drag one of several selected boxes | `at=x,y` on each of them, in one step |
+| Hold Shift while dragging | the box lined up with the box its arrow comes from, so the arrow runs straight |
+| Double-click empty space | a new line, `box1 "Box 1"`, inside the open level |
+| Drag one of the four dots on a box onto a side of another box | a new line, `a -> b from=right to=left`. The arrow keeps those sides when boxes move. |
+| Double-click a box, or select it and press `Enter` | its label, typed in place |
+| Select boxes or arrows and press `Delete` | those lines removed, with every arrow to the boxes |
+| Press **Tidy** | every `at=` on the level removed |
+
+`Ctrl+Z` undoes any of it, typed or drawn, because it is all one text.
 
 ## How it works
 
-Three parts, each one small:
+Four parts, each one small:
 
 | Part | File | What it does |
 |---|---|---|
 | **Parser** | `src/parser.ts` | Text to a tree of nodes, in one pass. Finds what each arrow points at. |
 | **Builder** | `src/builder.ts` | For one open node: its boxes, and every arrow that touches its inside, bubbled up. |
-| **Drawer** | `src/drawer.ts` | Puts one level on screen as SVG, and animates between levels and edits. |
+| **Drawer** | `src/drawer.ts` | Puts one level on screen as SVG, and reports what the mouse does. |
+| **Writer** | `src/writer.ts` | Turns a change, like "move this box", into the smallest edit of the text. |
 
 The Drawer uses `src/layout.ts`, which places boxes in columns, orders them to cut crossings, and
 solves their heights exactly. It needs no browser, so it is tested on its own.
 
 ```sh
-pnpm test     # 32 tests
+pnpm test     # 47 tests
 pnpm check    # types
 pnpm bench    # speed on a made-up file of 22,200 lines and 10,000 arrows
 ```
@@ -59,5 +76,4 @@ takes 0.002 ms after the first, and laying out a level of 200 boxes takes under 
 
 ## Status
 
-Version 0.1. You edit by typing. Next: dragging a box writes its position into the text, more
-animation, and plugins for new shapes and properties.
+Version 0.1. Next: pan and zoom, export and share links, and plugins for new shapes and properties.

@@ -110,6 +110,24 @@ describe('layout', () => {
     expect(below.edges.get('a>b')!.points[0]).toEqual({ x: top.x, y: top.y + 30 })
   })
 
+  it('keeps an arrow on the sides it was given, wherever the boxes are', () => {
+    const sides = { from: 'bottom', to: 'top' } as const
+    const { nodes, edges } = layout([box('a'), box('b')], [{ key: 'a>b', from: 'a', to: 'b', sides }])
+    const a = nodes.get('a')!
+    const b = nodes.get('b')!
+    const points = edges.get('a>b')!.points
+    expect(points[0]).toEqual({ x: a.x, y: a.y + a.h / 2 })
+    expect(points[points.length - 1]).toEqual({ x: b.x, y: b.y - b.h / 2 - 2 })
+  })
+
+  it('spreads several arrows on one side, in the order of where they go', () => {
+    const { edges } = layout(
+      [box('a'), { ...box('b'), at: { x: 400, y: -150 } }, { ...box('c'), at: { x: 400, y: 150 } }],
+      [{ key: 'ab', from: 'a', to: 'b', sides: { from: 'right' } }, { key: 'ac', from: 'a', to: 'c', sides: { from: 'right' } }],
+    )
+    expect(edges.get('ab')!.points[0].y).toBeLessThan(edges.get('ac')!.points[0].y)
+  })
+
   it('handles nothing, and gives the same answer every time', () => {
     expect(layout([], []).bounds).toEqual({ x: 0, y: 0, w: 0, h: 0 })
     const input = [box('a'), box('b'), box('c')]

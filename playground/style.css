@@ -62,7 +62,7 @@ body {
 .crumbs .here { padding: 3px 8px; font-weight: 700; }
 .crumbs .sep { color: var(--muted); }
 .pick { display: flex; align-items: center; gap: 6px; color: var(--muted); }
-select, #reset {
+select, .bar button:not(.crumbs button) {
   padding: 4px 10px;
   border: 1px solid var(--rule);
   border-radius: 8px;
@@ -70,8 +70,9 @@ select, #reset {
   color: var(--ink);
   font: inherit;
 }
-#reset { cursor: pointer; }
-#reset:hover { background: var(--hover); }
+.bar > button { cursor: pointer; }
+.bar > button:hover:not(:disabled) { background: var(--hover); }
+.bar > button:disabled { color: var(--muted); cursor: default; }
 
 .split {
   display: grid;

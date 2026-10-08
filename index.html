@@ -10,7 +10,8 @@
     <header class="bar">
       <strong class="brand">ordigram</strong>
       <nav class="crumbs" id="crumbs" aria-label="Where you are"></nav>
-      <label class="pick">Example <select id="example"></select></label>
+      <label class="pick">Diagram <select id="example"></select></label>
+      <button id="tidy" type="button" title="Put every box on this level back in its automatic place">Tidy</button>
       <button id="reset" type="button">Reset</button>
     </header>
     <main class="split">
@@ -26,8 +27,8 @@
         <ul class="problems" id="problems"></ul>
       </section>
       <section class="view">
-        <svg id="canvas" role="img" aria-label="Diagram"></svg>
-        <p class="hint">Click a stacked box to open it · Esc goes back · Hover to find its line</p>
+        <svg id="canvas" role="img" aria-label="Diagram" tabindex="0"></svg>
+        <p class="hint">Drag on empty space to select · Shift-click adds · Drag a dot to connect · Hold Shift while moving to straighten · Double-click to open, rename or add · Delete removes · Esc goes back</p>
       </section>
     </main>
     <footer class="status" id="status"></footer>

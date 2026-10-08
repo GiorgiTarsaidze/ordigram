@@ -1,5 +1,5 @@
 # An online shop.
-# Click a stacked box to open it. Labels with › open arrows.
+# Double-click a stacked box to go inside. Esc comes back out.
 
 customer "Customer" shape=person
 web "Web app"

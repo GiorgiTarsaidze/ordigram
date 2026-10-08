@@ -79,6 +79,7 @@ it is drawn `orders -> db`, with `db` as an outside box.
 | `size` | `WxH`, like `200x80` | A fixed size, instead of fitting the label |
 | `at` | `x,y`, like `120,80` | A fixed position for the center, instead of the automatic layout |
 | `flow` | on arrows | Dots move along the arrow, from start to end |
+| `from`, `to` | on arrows: `top`, `right`, `bottom`, `left` | The side of its start box the arrow leaves from, and the side of its end box it arrives at. Without them, the sides follow where the boxes are. |
 
 Every other property is kept and ignored. Later, plugins give them a meaning.
 

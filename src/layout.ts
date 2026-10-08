@@ -6,9 +6,11 @@
 //   4. order each column to cut crossings
 //   5. space the columns
 //   6. solve the height of every box exactly, column by column
-//   7. draw smooth curves through the bend points
+//   7. draw smooth curves through the bend points, or straight from side to side when the sides are chosen
 
 export interface Point { x: number; y: number }
+/** A side of a box, where an arrow leaves or arrives. */
+export type Side = 'top' | 'right' | 'bottom' | 'left'
 export interface Size { w: number; h: number }
 export interface Placed extends Point, Size {}
 
@@ -24,6 +26,8 @@ export interface LayoutEdge {
   to: string
   /** Room for the label, kept free in the middle of the arrow. */
   label?: Size | null
+  /** The sides it leaves from and arrives at. A missing one is picked from where the boxes are. */
+  sides?: { from?: Side | null; to?: Side | null } | null
 }
 
 export interface Route {
@@ -61,7 +65,19 @@ interface Edge {
   labelAt: number
   /** Which piece of the chain holds the label when labelAt is -1. */
   labelPiece: number
+  sides: { from: Side | null; to: Side | null }
 }
+
+/** One end of an arrow on one side of a box, and how far along that side it sits. */
+interface End {
+  v: number
+  side: Side
+  /** Where the other end is, along this side. Ends are spread in this order, so they do not cross. */
+  toward: number
+  offset: number
+}
+
+const NORMAL: Record<Side, Point> = { top: { x: 0, y: -1 }, right: { x: 1, y: 0 }, bottom: { x: 0, y: 1 }, left: { x: -1, y: 0 } }
 
 export function layout(nodes: readonly LayoutNode[], edges: readonly LayoutEdge[]): Layout {
   const n = nodes.length
@@ -77,7 +93,8 @@ export function layout(nodes: readonly LayoutNode[], edges: readonly LayoutEdge[
     const s = index.get(e.from)
     const t = index.get(e.to)
     if (s === undefined || t === undefined || s === t) continue
-    es.push({ key: e.key, s, t, label: e.label ?? null, turned: false, chain: [], labelAt: -1, labelPiece: 0 })
+    const sides = { from: e.sides?.from ?? null, to: e.sides?.to ?? null }
+    es.push({ key: e.key, s, t, label: e.label ?? null, turned: false, chain: [], labelAt: -1, labelPiece: 0, sides })
   }
 
   // 1. Cycles: walk depth first in file order. An arrow back to a box on the current path is turned.
@@ -378,65 +395,85 @@ export function layout(nodes: readonly LayoutNode[], edges: readonly LayoutEdge[
     }
   })
 
-  // 7. Arrows. Several arrows on one side of a box get their own spots, in the order of where they go.
-  const ports = new Map<Edge, [number, number]>()
-  const spots = (v: number, list: Edge[], next: (e: Edge) => number, end: 0 | 1) => {
-    list.sort((a, b) => py[next(a)] - py[next(b)])
-    const step = list.length > 1 ? Math.min(PORT_STEP, (H[v] - 18) / (list.length - 1)) : 0
-    list.forEach((e, i) => {
-      const p = ports.get(e) ?? [0, 0]
-      p[end] = (i - (list.length - 1) / 2) * step
-      ports.set(e, p)
-    })
+  // 7. Arrows. Between two boxes the layout placed, an arrow runs through its bend points, from the right
+  //    side of one to the left side of the next. With chosen sides, or a box placed by hand, it runs
+  //    straight from side to side. Several arrows on one side of a box get their own spots.
+  const sideToward = (a: number, b: number): Side => {
+    const dx = px[b] - px[a]
+    const dy = py[b] - py[a]
+    if (Math.abs(dx) - (W[a] + W[b]) / 2 >= Math.abs(dy) - (H[a] + H[b]) / 2) return dx >= 0 ? 'right' : 'left'
+    return dy >= 0 ? 'bottom' : 'top'
   }
-  const leaving: Edge[][] = Array.from({ length: n }, () => [])
-  const arriving: Edge[][] = Array.from({ length: n }, () => [])
+  const along = (side: Side, v: number) => (side === 'left' || side === 'right' ? py[v] : px[v])
+  const bySide = new Map<string, End[]>()
+  const endsOf = new Map<Edge, [End, End]>()
+  const straight = new Set<Edge>()
+  const end = (v: number, side: Side, toward: number): End => {
+    const it = { v, side, toward, offset: 0 }
+    const key = `${v} ${side}`
+    const list = bySide.get(key)
+    if (list) list.push(it)
+    else bySide.set(key, [it])
+    return it
+  }
   for (const e of es) {
-    if (fixed[e.s] || fixed[e.t]) continue
-    leaving[e.chain[0]].push(e)
-    arriving[e.chain[e.chain.length - 1]].push(e)
+    if (fixed[e.s] || fixed[e.t] || e.sides.from || e.sides.to) {
+      straight.add(e)
+      const from = e.sides.from ?? sideToward(e.s, e.t)
+      const to = e.sides.to ?? sideToward(e.t, e.s)
+      endsOf.set(e, [end(e.s, from, along(from, e.t)), end(e.t, to, along(to, e.s))])
+    } else {
+      const a = e.chain[0]
+      const b = e.chain[e.chain.length - 1]
+      endsOf.set(e, [end(a, 'right', py[e.chain[1]]), end(b, 'left', py[e.chain[e.chain.length - 2]])])
+    }
   }
-  for (let v = 0; v < n; v++) {
-    spots(v, leaving[v], e => e.chain[1], 0)
-    spots(v, arriving[v], e => e.chain[e.chain.length - 2], 1)
+  for (const list of bySide.values()) {
+    list.sort((p, q) => p.toward - q.toward)
+    const { v, side } = list[0]
+    const room = side === 'left' || side === 'right' ? H[v] : W[v]
+    const step = list.length > 1 ? Math.max(0, Math.min(PORT_STEP, (room - 18) / (list.length - 1))) : 0
+    list.forEach((it, i) => (it.offset = (i - (list.length - 1) / 2) * step))
   }
+  const port = ({ v, side, offset }: End): Point =>
+    side === 'right' ? { x: px[v] + W[v] / 2, y: py[v] + offset }
+    : side === 'left' ? { x: px[v] - W[v] / 2, y: py[v] + offset }
+    : side === 'top' ? { x: px[v] + offset, y: py[v] - H[v] / 2 }
+    : { x: px[v] + offset, y: py[v] + H[v] / 2 }
 
   const routes = new Map<string, Route>()
   for (const e of es) {
-    let points: Point[]
-    let label: Point
-    let upright = false
-    if (fixed[e.s] || fixed[e.t]) {
-      const dx = px[e.t] - px[e.s]
-      const dy = py[e.t] - py[e.s]
-      upright = Math.abs(dy) - (H[e.s] + H[e.t]) / 2 > Math.abs(dx) - (W[e.s] + W[e.t]) / 2
-      const sx = Math.sign(dx) || 1
-      const sy = Math.sign(dy) || 1
-      points = upright
-        ? [{ x: px[e.s], y: py[e.s] + sy * H[e.s] / 2 }, { x: px[e.t], y: py[e.t] - sy * H[e.t] / 2 }]
-        : [{ x: px[e.s] + sx * W[e.s] / 2, y: py[e.s] }, { x: px[e.t] - sx * W[e.t] / 2, y: py[e.t] }]
-      label = { x: (points[0].x + points[1].x) / 2, y: (points[0].y + points[1].y) / 2 }
-    } else {
-      const [startDy, endDy] = ports.get(e) ?? [0, 0]
-      const a = e.chain[0]
-      const b = e.chain[e.chain.length - 1]
-      points = e.chain.map(v => ({ x: px[v], y: py[v] }))
-      points[0] = { x: px[a] + W[a] / 2, y: py[a] + startDy }
-      points[points.length - 1] = { x: px[b] - W[b] / 2, y: py[b] + endDy }
-      if (e.labelAt >= 0) label = { x: px[e.labelAt], y: py[e.labelAt] }
-      else {
-        const p = points[e.labelPiece]
-        const q = points[e.labelPiece + 1]
-        label = { x: (p.x + q.x) / 2, y: (p.y + q.y) / 2 }
-      }
-      if (e.turned) points.reverse()
+    const [first, second] = endsOf.get(e)!
+    if (straight.has(e)) {
+      // One smooth curve that leaves its side square, and arrives square, with room for the tip.
+      const n0 = NORMAL[first.side]
+      const n3 = NORMAL[second.side]
+      const p0 = port(first)
+      const p3 = port(second)
+      p3.x += n3.x * 2
+      p3.y += n3.y * 2
+      const reach = Math.max(24, Math.hypot(p3.x - p0.x, p3.y - p0.y) * 0.4)
+      const c1 = { x: p0.x + n0.x * reach, y: p0.y + n0.y * reach }
+      const c2 = { x: p3.x + n3.x * reach, y: p3.y + n3.y * reach }
+      const label = { x: (p0.x + 3 * c1.x + 3 * c2.x + p3.x) / 8, y: (p0.y + 3 * c1.y + 3 * c2.y + p3.y) / 8 }
+      routes.set(e.key, { d: `M${xy(p0)}C${xy(c1)} ${xy(c2)} ${xy(p3)}`, points: [p0, c1, c2, p3], label })
+      continue
     }
+    const points = e.chain.map(v => ({ x: px[v], y: py[v] }))
+    points[0] = port(first)
+    points[points.length - 1] = port(second)
+    let label: Point
+    if (e.labelAt >= 0) label = { x: px[e.labelAt], y: py[e.labelAt] }
+    else {
+      const p = points[e.labelPiece]
+      const q = points[e.labelPiece + 1]
+      label = { x: (p.x + q.x) / 2, y: (p.y + q.y) / 2 }
+    }
+    if (e.turned) points.reverse()
     // Leave a little room at the end for the arrow tip.
     const last = points[points.length - 1]
-    const before = points[points.length - 2]
-    if (upright) last.y += Math.sign(before.y - last.y) * 2
-    else last.x += Math.sign(before.x - last.x) * 2
-    routes.set(e.key, { d: curve(points, upright), points, label })
+    last.x += Math.sign(points[points.length - 2].x - last.x) * 2
+    routes.set(e.key, { d: curve(points), points, label })
   }
 
   // Everything drawn, for fitting the view.
@@ -499,19 +536,16 @@ export function spread(want: number[], weight: number[], gaps: number[]): number
 
 const round = (n: number) => Math.round(n * 10) / 10
 
-/** A smooth path through the points that leaves and enters each one level (or upright). */
-function curve(points: Point[], upright: boolean): string {
-  let d = `M${round(points[0].x)},${round(points[0].y)}`
+const xy = (p: Point) => `${round(p.x)},${round(p.y)}`
+
+/** A smooth path through the points that leaves and enters each one level. */
+function curve(points: Point[]): string {
+  let d = `M${xy(points[0])}`
   for (let i = 1; i < points.length; i++) {
     const p = points[i - 1]
     const q = points[i]
-    if (upright) {
-      const m = (q.y - p.y) / 2
-      d += `C${round(p.x)},${round(p.y + m)} ${round(q.x)},${round(q.y - m)} ${round(q.x)},${round(q.y)}`
-    } else {
-      const m = (q.x - p.x) / 2
-      d += `C${round(p.x + m)},${round(p.y)} ${round(q.x - m)},${round(q.y)} ${round(q.x)},${round(q.y)}`
-    }
+    const m = (q.x - p.x) / 2
+    d += `C${xy({ x: p.x + m, y: p.y })} ${xy({ x: q.x - m, y: q.y })} ${xy(q)}`
   }
   return d
 }

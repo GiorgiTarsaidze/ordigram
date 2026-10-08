@@ -1,17 +1,19 @@
 import '@fontsource-variable/figtree'
 import '@fontsource-variable/jetbrains-mono'
 import './style.css'
-import { build, createDrawer, find, parse, pathOf } from '../src'
-import type { Doc, Node } from '../src'
+import { addArrow, addBox, build, createDrawer, find, isBox, parse, pathOf, remove, setLabel, setProps, tidy } from '../src'
+import type { Doc, Edit, Node } from '../src'
 import { paint } from './paint'
 import shop from '../examples/shop.ordi?raw'
 import shapes from '../examples/shapes.ordi?raw'
 
 // The playground: the text on the left, the drawing on the right, and both kept in step.
-// It is for trying things out locally. It saves your text in this browser as you type.
+// The mouse edits the text too: every drag, click and rename becomes a small text edit, so the
+// browser's undo works for both, and the text stays the only truth.
+// It is for trying things out locally. Each diagram keeps your changes in this browser as you go.
 
-const EXAMPLES: Record<string, string> = { shop, shapes }
-const STORE = 'ordigram:playground'
+const EXAMPLES: Record<string, string> = { shop, shapes, blank: '# Double-click anywhere to add a box.\n' }
+const STORE = 'ordigram:playground:v2'
 const LINE = 20
 const PAD = 12
 
@@ -24,16 +26,42 @@ const problems = byId('problems')
 const crumbs = byId('crumbs')
 const status = byId('status')
 const picker = byId<HTMLSelectElement>('example')
+const tidyButton = byId<HTMLButtonElement>('tidy')
 
 let doc: Doc = parse('')
 let path = readHash()
 let byLine = new Map<number, Node>()
-let markedLine = 0
+let selection: Node[] = []
+let hoverLine = 0
 let timings = { parse: 0, build: 0, draw: 0 }
+
+const open = () => find(doc, path)
 
 const drawer = createDrawer(byId<SVGSVGElement>('canvas'), {
   onOpen: node => go(pathOf(node)),
-  onHover: node => showLine(node && node.line > 0 ? node.line : 0),
+  onHover: node => {
+    hoverLine = node && node.line > 0 ? node.line : 0
+    markLine()
+  },
+  onSelect: nodes => {
+    selection = nodes
+    if (nodes.length === 1) showInText(nodes[0].line)
+    markLine()
+  },
+  edit: {
+    move: moves => write(setProps(src.value, moves.map(({ box, at }) => ({ node: box, key: 'at', value: `${at.x},${at.y}` })))),
+    add: at => {
+      const { edit, id } = addBox(src.value, open(), { at: `${at.x},${at.y}` })
+      write(edit)
+      const box = find(doc, [...path, id])
+      if (box.id === id) {
+        drawer.select(box)
+        drawer.rename(box)
+      }
+    },
+    connect: (from, to, sides) => write(addArrow(src.value, open(), from, to, { from: sides.from, to: sides.to })),
+    rename: (node, label) => write(setLabel(src.value, node, label)),
+  },
 })
 
 // ---------- text to drawing ----------
@@ -58,13 +86,14 @@ function update(how: 'update' | 'new' = 'update') {
 
 function draw(how: 'update' | 'new') {
   const t0 = performance.now()
-  const open = find(doc, path)
-  path = pathOf(open)
-  const level = build(doc, open)
+  const node = open()
+  path = pathOf(node)
+  const level = build(doc, node)
   const t1 = performance.now()
   drawer.show(level, how)
   timings.build = t1 - t0
   timings.draw = performance.now() - t1
+  tidyButton.disabled = !node.kids.some(k => isBox(k) && k.props.at !== undefined)
   paintCrumbs()
   paintStatus()
   followCaret()
@@ -91,6 +120,65 @@ addEventListener('popstate', () => {
   draw('new')
 })
 
+// ---------- the mouse edits the text ----------
+
+// Edits go through the text box, so they join its undo history. Focus goes back where it was.
+let writing = false
+
+function write(edit: Edit | null) {
+  if (!edit) return
+  const back = document.activeElement
+  writing = true
+  src.focus({ preventScroll: true })
+  src.setSelectionRange(edit.from, edit.to)
+  const done = edit.insert ? document.execCommand('insertText', false, edit.insert) : document.execCommand('delete')
+  if (!done) src.setRangeText(edit.insert, edit.from, edit.to, 'end')
+  // Put the text cursor at the start of the changed line, so the drawing lights up what changed.
+  const at = edit.from + (/^\r?\n/.exec(edit.insert)?.[0].length ?? 0)
+  const lineStart = src.value.lastIndexOf('\n', at - 1) + 1
+  const indent = /^ */.exec(src.value.slice(lineStart))![0].length
+  src.setSelectionRange(lineStart + indent, lineStart + indent)
+  writing = false
+  update()
+  if (back instanceof HTMLElement || back instanceof SVGElement) back.focus({ preventScroll: true })
+}
+
+function undo(redo: boolean) {
+  const back = document.activeElement
+  writing = true
+  src.focus({ preventScroll: true })
+  document.execCommand(redo ? 'redo' : 'undo')
+  writing = false
+  update()
+  if (back instanceof HTMLElement || back instanceof SVGElement) back.focus({ preventScroll: true })
+}
+
+tidyButton.addEventListener('click', () => {
+  write(tidy(src.value, open()))
+  drawer.fit()
+})
+
+addEventListener('keydown', e => {
+  const target = e.target as Element
+  const typing = target.matches('textarea, input, select')
+  const command = e.ctrlKey || e.metaKey
+  if (command && !typing && ['z', 'Z', 'y'].includes(e.key)) {
+    e.preventDefault()
+    undo(e.key === 'y' || e.shiftKey)
+  } else if (typing) {
+    return
+  } else if (e.key === 'Escape') {
+    if (selection.length) drawer.select(null)
+    else up(path.length - 1)
+  } else if ((e.key === 'Delete' || e.key === 'Backspace') && selection.length) {
+    e.preventDefault()
+    write(remove(src.value, doc, selection))
+  } else if ((e.key === 'Enter' || e.key === 'F2') && selection.length === 1) {
+    e.preventDefault()
+    drawer.rename(selection[0])
+  }
+})
+
 // ---------- the editor ----------
 
 function paintEditor() {
@@ -112,13 +200,26 @@ function syncScroll() {
   paintEl.scrollTop = src.scrollTop
   paintEl.scrollLeft = src.scrollLeft
   gutter.scrollTop = src.scrollTop
-  showLine(markedLine)
+  markLine()
 }
 
-function showLine(line: number) {
-  markedLine = line
+/** Lights up the line under the pointer, or else the line of what is selected. */
+function markLine() {
+  const line = hoverLine || (selection[0]?.line ?? 0)
   mark.style.display = line ? 'block' : 'none'
   mark.style.top = `${PAD + (line - 1) * LINE - src.scrollTop}px`
+}
+
+/** Puts the text cursor on a line and scrolls to it, without taking the keyboard away from the drawing. */
+function showInText(line: number) {
+  let offset = 0
+  for (let n = 1; n < line; n++) offset = src.value.indexOf('\n', offset) + 1
+  const indent = /^ */.exec(src.value.slice(offset))![0].length
+  src.setSelectionRange(offset + indent, offset + indent)
+  const top = (line - 1) * LINE
+  if (top < src.scrollTop || top > src.scrollTop + src.clientHeight - LINE * 2) src.scrollTop = Math.max(0, top - src.clientHeight / 2)
+  syncScroll()
+  followCaret()
 }
 
 function lineAt(offset: number): number {
@@ -155,12 +256,12 @@ src.addEventListener('keydown', e => {
   if (e.key === 'Tab') {
     e.preventDefault()
     if (!e.shiftKey) return type('  ')
-    const remove = Math.min(2, indent.length)
-    if (!remove) return
+    const drop = Math.min(2, indent.length)
+    if (!drop) return
     const caret = src.selectionStart
-    src.setSelectionRange(lineStart, lineStart + remove)
+    src.setSelectionRange(lineStart, lineStart + drop)
     document.execCommand('delete')
-    src.setSelectionRange(Math.max(lineStart, caret - remove), Math.max(lineStart, caret - remove))
+    src.setSelectionRange(Math.max(lineStart, caret - drop), Math.max(lineStart, caret - drop))
   } else if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
     e.preventDefault()
     type('\n' + indent)
@@ -169,11 +270,10 @@ src.addEventListener('keydown', e => {
 
 let queued = false
 src.addEventListener('input', () => {
-  if (queued) return
+  if (writing || queued) return
   queued = true
   requestAnimationFrame(() => {
     queued = false
-    picker.value = Object.keys(EXAMPLES).find(k => EXAMPLES[k] === src.value) ?? ''
     update()
   })
 })
@@ -229,11 +329,36 @@ function paintStatus() {
   ].map(s => `<span>${s}</span>`).join('')
 }
 
-function save() {
+// ---------- your diagrams ----------
+
+// Every diagram keeps its own text, so switching between them loses nothing. Reset brings back the original.
+interface Saved {
+  current: string
+  texts: Record<string, string>
+}
+
+function readSaved(): Saved {
   try {
-    localStorage.setItem(STORE, src.value)
+    const raw = JSON.parse(localStorage.getItem(STORE) ?? 'null')
+    if (raw && EXAMPLES[raw.current] !== undefined && typeof raw.texts === 'object') return raw
   } catch {
     // Saving is a convenience. The page works without it.
+  }
+  return { current: 'shop', texts: {} }
+}
+
+const saved = readSaved()
+
+function save() {
+  saved.texts[saved.current] = src.value
+  try {
+    localStorage.setItem(STORE, JSON.stringify(saved))
+  } catch {
+    // Saving is a convenience. The page works without it.
+  }
+  for (const option of picker.options) {
+    const text = saved.texts[option.value]
+    option.text = option.value + (text !== undefined && text !== EXAMPLES[option.value] ? ' (edited)' : '')
   }
 }
 
@@ -244,26 +369,15 @@ function load(text: string) {
   update('new')
 }
 
-for (const name of ['', ...Object.keys(EXAMPLES)]) {
-  picker.append(new Option(name || 'Your text', name, false, false))
-}
+for (const name of Object.keys(EXAMPLES)) picker.append(new Option(name, name))
 picker.addEventListener('change', () => {
-  if (picker.value) load(EXAMPLES[picker.value])
+  saved.current = picker.value
+  load(saved.texts[picker.value] ?? EXAMPLES[picker.value])
 })
-byId('reset').addEventListener('click', () => load(EXAMPLES[picker.value] ?? shop))
+byId('reset').addEventListener('click', () => load(EXAMPLES[saved.current]))
 
-addEventListener('keydown', e => {
-  if (e.key === 'Escape' && document.activeElement !== src) up(path.length - 1)
-})
-
-let saved: string | null = null
-try {
-  saved = localStorage.getItem(STORE)
-} catch {
-  saved = null
-}
-src.value = saved ?? shop
-picker.value = Object.keys(EXAMPLES).find(k => EXAMPLES[k] === src.value) ?? ''
+picker.value = saved.current
+src.value = saved.texts[saved.current] ?? EXAMPLES[saved.current]
 // Wait for the fonts, so the first drawing is measured with the right one.
 await Promise.all([
   document.fonts.load('600 14px "Figtree Variable"'),
