@@ -15,7 +15,7 @@ web -> api "HTTPS" flow
 api/orders -> db "SQL"
 ```
 
-The file is UTF-8. Lines end with `\n` or `\r\n`.
+A file ends in `.ordi`. It is UTF-8, and lines end with `\n` or `\r\n`.
 
 ## Rule 1: one line is one node
 

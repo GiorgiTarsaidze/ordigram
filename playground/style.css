@@ -168,10 +168,73 @@ select, .bar button:not(.crumbs button) {
   min-width: 0;
   min-height: 0;
 }
+.zoom {
+  position: absolute;
+  right: 14px;
+  bottom: 12px;
+  display: flex;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  background: var(--paper);
+  overflow: hidden;
+}
+.zoom button {
+  min-width: 34px;
+  padding: 5px 9px;
+  border: 0;
+  border-right: 1px solid var(--rule);
+  background: none;
+  color: var(--ink);
+  font: 500 13px var(--sans);
+  cursor: pointer;
+}
+.zoom button:last-child { border-right: 0; }
+.zoom button:hover { background: var(--hover); }
+#zoom-level { min-width: 58px; font-variant-numeric: tabular-nums; }
+
+.menu { position: relative; }
+.menu summary {
+  list-style: none;
+  padding: 4px 10px;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+.menu summary::-webkit-details-marker { display: none; }
+.menu summary:hover, .menu[open] summary { background: var(--hover); }
+.menu-list {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 5;
+  display: grid;
+  min-width: 230px;
+  padding: 6px;
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  background: var(--paper);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.08);
+}
+.menu-list button {
+  display: grid;
+  gap: 1px;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--ink);
+  font: 500 14px var(--sans);
+  text-align: left;
+  cursor: pointer;
+}
+.menu-list button:hover { background: var(--hover); }
+.menu-list small { color: var(--muted); font-size: 12px; font-weight: 400; }
 #canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
 .hint {
   position: absolute;
   left: 16px;
+  right: 230px;
   bottom: 10px;
   margin: 0;
   color: var(--muted);

@@ -1,7 +1,7 @@
 export { parse } from './parser'
 export { build, find, hasInside, isBox, keyOf, pathOf } from './builder'
 export type { Level, Link } from './builder'
-export { createDrawer } from './drawer'
+export { createDrawer, svgToPng } from './drawer'
 export type { Drawer, DrawerOptions, Editing } from './drawer'
 export { layout, spread } from './layout'
 export type { Layout, LayoutEdge, LayoutNode, Placed, Point, Route, Side } from './layout'

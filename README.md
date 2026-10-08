@@ -34,6 +34,9 @@ The playground puts the text on the left and the drawing on the right:
 - Hover a box or an arrow to light up its line. Put the cursor on a line to light up its box.
 - Mistakes show with a line, a column and a hint, and the rest still draws.
 - Each diagram keeps your changes in this browser. **Reset** brings back the original.
+- Scroll, or hold Space and drag, to pan. Ctrl + scroll (or a pinch) zooms. The corner control and the
+  `+`, `-` and `0` keys zoom in, out and back to fit.
+- **Export** downloads the whole diagram as a `.ordi` file, or the level you see as SVG or PNG.
 
 The mouse edits the text too, so you can draw instead of typing:
 

@@ -1,11 +1,12 @@
 import '@fontsource-variable/figtree'
 import '@fontsource-variable/jetbrains-mono'
 import './style.css'
-import { addArrow, addBox, build, createDrawer, find, isBox, parse, pathOf, remove, setLabel, setProps, tidy } from '../src'
+import { addArrow, addBox, build, createDrawer, find, isBox, parse, pathOf, remove, setLabel, setProps, svgToPng, tidy } from '../src'
 import type { Doc, Edit, Node } from '../src'
 import { paint } from './paint'
 import shop from '../examples/shop.ordi?raw'
 import shapes from '../examples/shapes.ordi?raw'
+import figtreeLatin from '@fontsource-variable/figtree/files/figtree-latin-wght-normal.woff2?url'
 
 // The playground: the text on the left, the drawing on the right, and both kept in step.
 // The mouse edits the text too: every drag, click and rename becomes a small text edit, so the
@@ -27,6 +28,8 @@ const crumbs = byId('crumbs')
 const status = byId('status')
 const picker = byId<HTMLSelectElement>('example')
 const tidyButton = byId<HTMLButtonElement>('tidy')
+const zoomLevel = byId('zoom-level')
+const exportMenu = byId<HTMLDetailsElement>('export')
 
 let doc: Doc = parse('')
 let path = readHash()
@@ -34,6 +37,7 @@ let byLine = new Map<number, Node>()
 let selection: Node[] = []
 let hoverLine = 0
 let timings = { parse: 0, build: 0, draw: 0 }
+let scale = 1
 
 const open = () => find(doc, path)
 
@@ -42,6 +46,10 @@ const drawer = createDrawer(byId<SVGSVGElement>('canvas'), {
   onHover: node => {
     hoverLine = node && node.line > 0 ? node.line : 0
     markLine()
+  },
+  onView: next => {
+    scale = next
+    zoomLevel.textContent = `${Math.round(next * 100)}%`
   },
   onSelect: nodes => {
     selection = nodes
@@ -176,7 +184,64 @@ addEventListener('keydown', e => {
   } else if ((e.key === 'Enter' || e.key === 'F2') && selection.length === 1) {
     e.preventDefault()
     drawer.rename(selection[0])
+  } else if (!command && (e.key === '+' || e.key === '=')) {
+    drawer.zoom(1.25)
+  } else if (!command && (e.key === '-' || e.key === '_')) {
+    drawer.zoom(0.8)
+  } else if (!command && e.key === '0') {
+    drawer.fit()
   }
+})
+
+// ---------- zoom ----------
+
+byId('zoom-in').addEventListener('click', () => drawer.zoom(1.25))
+byId('zoom-out').addEventListener('click', () => drawer.zoom(0.8))
+byId('zoom-fit').addEventListener('click', () => drawer.fit())
+zoomLevel.addEventListener('click', () => drawer.zoom(1 / scale))
+
+// ---------- export ----------
+
+// SVG and PNG carry the font inside them, so they look the same on a computer without it.
+let fontFace: Promise<string> | null = null
+function embeddedFont(): Promise<string> {
+  fontFace ??= fetch(figtreeLatin)
+    .then(response => response.blob())
+    .then(blob => new Promise<string>((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(`@font-face { font-family: "Figtree Variable"; font-weight: 300 900; src: url(${reader.result}) format("woff2"); }`)
+      reader.onerror = () => reject(reader.error)
+      reader.readAsDataURL(blob)
+    }))
+    .catch(() => '')
+  return fontFace
+}
+
+/** The diagram's name, then the level, like shop-api.svg. */
+function fileName(extension: string): string {
+  return [saved.current, ...path].map(part => part.replace(/[^\w-]+/g, '_')).join('-') + '.' + extension
+}
+
+function download(blob: Blob, name: string) {
+  const url = URL.createObjectURL(blob)
+  const link = Object.assign(document.createElement('a'), { href: url, download: name })
+  document.body.append(link)
+  link.click()
+  link.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+
+exportMenu.addEventListener('click', async e => {
+  const as = (e.target as Element).closest('button')?.dataset.as
+  if (!as) return
+  exportMenu.open = false
+  if (as === 'ordi') return download(new Blob([src.value], { type: 'text/plain' }), `${saved.current}.ordi`)
+  const svg = drawer.toSvg({ fontFace: await embeddedFont() })
+  if (as === 'svg') download(new Blob([svg], { type: 'image/svg+xml' }), fileName('svg'))
+  else download(await svgToPng(svg), fileName('png'))
+})
+addEventListener('pointerdown', e => {
+  if (exportMenu.open && !exportMenu.contains(e.target as Element)) exportMenu.open = false
 })
 
 // ---------- the editor ----------

@@ -12,7 +12,15 @@
       <nav class="crumbs" id="crumbs" aria-label="Where you are"></nav>
       <label class="pick">Diagram <select id="example"></select></label>
       <button id="tidy" type="button" title="Put every box on this level back in its automatic place">Tidy</button>
-      <button id="reset" type="button">Reset</button>
+      <button id="reset" type="button" title="Bring back the original diagram">Reset</button>
+      <details class="menu" id="export">
+        <summary>Export</summary>
+        <div class="menu-list">
+          <button type="button" data-as="ordi">Diagram file (.ordi)<small>The whole diagram, as text</small></button>
+          <button type="button" data-as="svg">SVG image<small>This level, sharp at any size</small></button>
+          <button type="button" data-as="png">PNG image<small>This level, as a picture</small></button>
+        </div>
+      </details>
     </header>
     <main class="split">
       <section class="code">
@@ -28,7 +36,13 @@
       </section>
       <section class="view">
         <svg id="canvas" role="img" aria-label="Diagram" tabindex="0"></svg>
-        <p class="hint">Drag on empty space to select · Shift-click adds · Drag a dot to connect · Hold Shift while moving to straighten · Double-click to open, rename or add · Delete removes · Esc goes back</p>
+        <div class="zoom">
+          <button id="zoom-out" type="button" title="Zoom out (-)">−</button>
+          <button id="zoom-level" type="button" title="Back to 100%">100%</button>
+          <button id="zoom-in" type="button" title="Zoom in (+)">+</button>
+          <button id="zoom-fit" type="button" title="Fit everything in view (0)">Fit</button>
+        </div>
+        <p class="hint">Drag empty space to select · Shift-click adds · Drag a dot to connect · Shift while moving straightens · Double-click opens, renames or adds · Scroll or Space + drag pans · Ctrl + scroll zooms</p>
       </section>
     </main>
     <footer class="status" id="status"></footer>

@@ -19,6 +19,8 @@ export interface DrawerOptions {
   onHover?: (node: Node | null) => void
   /** Called when the selection changes: one box, the arrows behind one arrow line, or nothing. */
   onSelect?: (nodes: Node[]) => void
+  /** Called when the zoom changes, with the new scale: 1 is 100%. */
+  onView?: (scale: number) => void
   /** Turns on editing with the mouse. */
   edit?: Editing
 }
@@ -46,10 +48,16 @@ export interface Drawer {
   rename(node: Node): void
   /** Fits the whole level in view. */
   fit(): void
+  /** Zooms in (above 1) or out (below 1) around the middle of the view. */
+  zoom(factor: number): void
+  /** The level on screen as a standalone SVG file, without selection or editing marks. */
+  toSvg(options?: { fontFace?: string }): string
   destroy(): void
 }
 
 const NS = 'http://www.w3.org/2000/svg'
+const MIN_ZOOM = 0.1
+const MAX_ZOOM = 4
 // Figtree when the page has it, otherwise the system's own font.
 const SANS = '"Figtree Variable", Figtree, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif'
 const LABEL_FONT = `600 14px ${SANS}`
@@ -145,7 +153,15 @@ interface Scene {
   spots: Map<string, Placed>
   bounds: Layout['bounds']
   /** How the level is scaled and moved to sit in view. */
-  view: { scale: number; tx: number; ty: number } | null
+  view: View | null
+  /** True once someone panned or zoomed: then edits never move the view on their own. */
+  manual: boolean
+}
+
+interface View {
+  scale: number
+  tx: number
+  ty: number
 }
 
 type Gesture =
@@ -153,6 +169,7 @@ type Gesture =
   | { kind: 'drag'; lead: NodeItem; items: { item: NodeItem; from: Point }[]; x: number; y: number }
   | { kind: 'wire'; item: NodeItem; side: Side; draft: SVGPathElement; target: NodeItem | null; targetSide: Side }
   | { kind: 'lasso'; start: Point; rect: SVGRectElement | null; x: number; y: number; base: Set<string> }
+  | { kind: 'pan'; x: number; y: number; view: View }
 
 const SIDES: Side[] = ['top', 'right', 'bottom', 'left']
 const NORMAL: Record<Side, Point> = { top: { x: 0, y: -1 }, right: { x: 1, y: 0 }, bottom: { x: 0, y: 1 }, left: { x: -1, y: 0 } }
@@ -274,7 +291,7 @@ export function createDrawer(svg: SVGSVGElement, options: DrawerOptions = {}): D
       tags: make('g', { class: 'o-tags' }, root),
     }
     svg.append(root)
-    return { root, layers, items: new Map(), shown: new Map(), spots: new Map(), bounds: { x: 0, y: 0, w: 0, h: 0 }, view: null }
+    return { root, layers, items: new Map(), shown: new Map(), spots: new Map(), bounds: { x: 0, y: 0, w: 0, h: 0 }, view: null, manual: false }
   }
 
   // New elements start see-through. fill() then makes the browser note that, and fades them in.
@@ -530,12 +547,23 @@ export function createDrawer(svg: SVGSVGElement, options: DrawerOptions = {}): D
 
   // ---------- fitting and fading ----------
 
-  /** Fits the level in view. Unless forced, the view stays put while everything still fits in it. */
+  const setView = (target: Scene, view: View, glide: boolean) => {
+    target.view = view
+    target.root.style.transition = glide ? 'transform .35s ease' : 'none'
+    target.root.style.transform = `translate(${view.tx}px, ${view.ty}px) scale(${view.scale})`
+    if (target === scene) options.onView?.(view.scale)
+  }
+
+  /**
+   * Fits the level in view. Unless forced, the view stays put while everything still fits in it,
+   * and it never moves on its own once someone panned or zoomed.
+   */
   const fit = (target: Scene, glide: boolean, force: boolean) => {
     const { width, height } = svg.getBoundingClientRect()
     if (!width || !height) return
     svg.setAttribute('viewBox', `0 0 ${width} ${height}`)
     const b = target.bounds
+    if (!force && target.manual) return
     if (!force && target.view) {
       const { scale, tx, ty } = target.view
       const margin = 12
@@ -546,9 +574,54 @@ export function createDrawer(svg: SVGSVGElement, options: DrawerOptions = {}): D
     const scale = b.w && b.h ? Math.min(1.1, (width - pad * 2) / b.w, (height - pad * 2) / b.h) : 1
     const tx = width / 2 - (b.x + b.w / 2) * scale
     const ty = height / 2 - (b.y + b.h / 2) * scale
-    target.view = { scale, tx, ty }
-    target.root.style.transition = glide ? 'transform .35s ease' : 'none'
-    target.root.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`
+    target.manual = false
+    setView(target, { scale, tx, ty }, glide)
+  }
+
+  /** Zooms by a factor, keeping the point under (x, y) on screen where it is. */
+  const zoomAt = (factor: number, x: number, y: number, glide: boolean) => {
+    if (!scene?.view) return
+    const r = svg.getBoundingClientRect()
+    const { scale, tx, ty } = scene.view
+    const next = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, scale * factor))
+    const px = x - r.left
+    const py = y - r.top
+    scene.manual = true
+    setView(scene, { scale: next, tx: px - ((px - tx) / scale) * next, ty: py - ((py - ty) / scale) * next }, glide)
+  }
+
+  const panBy = (dx: number, dy: number) => {
+    if (!scene?.view) return
+    scene.manual = true
+    setView(scene, { ...scene.view, tx: scene.view.tx + dx, ty: scene.view.ty + dy }, false)
+  }
+
+  // The wheel pans, like scrolling a page. With Ctrl or Cmd held, or a pinch on a touchpad, it zooms.
+  const onWheel = (e: WheelEvent) => {
+    if (!scene || renaming) return
+    e.preventDefault()
+    const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? svg.clientHeight : 1
+    const dx = e.deltaX * unit
+    const dy = e.deltaY * unit
+    if (e.ctrlKey || e.metaKey) zoomAt(Math.pow(1.0018, -dy), e.clientX, e.clientY, false)
+    else if (e.shiftKey && !dx) panBy(-dy, 0)
+    else panBy(-dx, -dy)
+  }
+
+  // Holding Space turns the pointer into a hand that pans, like in most drawing tools.
+  let spaceHeld = false
+  const onSpace = (e: KeyboardEvent) => {
+    if (e.key !== ' ') return
+    if (e.type === 'keydown' && document.activeElement !== svg) return
+    if (e.type === 'keydown') e.preventDefault()
+    spaceHeld = e.type === 'keydown'
+    svg.classList.toggle('o-pannable', spaceHeld)
+  }
+  addEventListener('keydown', onSpace)
+  addEventListener('keyup', onSpace)
+  // The middle button pans too. Stop the browser's own scrolling mode for it.
+  const onMiddle = (e: MouseEvent) => {
+    if (e.button === 1) e.preventDefault()
   }
 
   const toScene = (x: number, y: number): Point => {
@@ -642,7 +715,17 @@ export function createDrawer(svg: SVGSVGElement, options: DrawerOptions = {}): D
   }
 
   const onDown = (e: PointerEvent) => {
-    if (e.button !== 0 || !scene || renaming) return
+    if (!scene || renaming) return
+    if (e.button === 1 || (e.button === 0 && spaceHeld)) {
+      e.preventDefault()
+      svg.focus({ preventScroll: true })
+      gesture = { kind: 'pan', x: e.clientX, y: e.clientY, view: { ...(scene.view ?? { scale: 1, tx: 0, ty: 0 }) } }
+      svg.classList.add('o-panning')
+      addEventListener('pointermove', onMove)
+      addEventListener('pointerup', onUp)
+      return
+    }
+    if (e.button !== 0) return
     svg.focus({ preventScroll: true })
     const target = e.target as Element
     const item = itemAt(target)
@@ -686,6 +769,12 @@ export function createDrawer(svg: SVGSVGElement, options: DrawerOptions = {}): D
 
   const onMove = (e: PointerEvent) => {
     if (!gesture || !scene || !shown) return
+    if (gesture.kind === 'pan') {
+      scene.manual = true
+      const { view } = gesture
+      setView(scene, { ...view, tx: view.tx + e.clientX - gesture.x, ty: view.ty + e.clientY - gesture.y }, false)
+      return
+    }
     last = { x: e.clientX, y: e.clientY, shift: e.shiftKey }
     if (gesture.kind === 'press') {
       const { item } = gesture
@@ -752,6 +841,10 @@ export function createDrawer(svg: SVGSVGElement, options: DrawerOptions = {}): D
     const done = gesture
     gesture = null
     if (!done || !scene || !shown) return
+    if (done.kind === 'pan') {
+      svg.classList.remove('o-panning')
+      return
+    }
     if (done.kind === 'drag') {
       svg.classList.remove('o-dragging')
       const moved = dragging!
@@ -808,6 +901,8 @@ export function createDrawer(svg: SVGSVGElement, options: DrawerOptions = {}): D
   }
 
   svg.addEventListener('pointerdown', onDown)
+  svg.addEventListener('mousedown', onMiddle)
+  svg.addEventListener('wheel', onWheel, { passive: false })
   svg.addEventListener('dblclick', onDouble)
 
   // ---------- typing a label in place ----------
@@ -872,9 +967,71 @@ export function createDrawer(svg: SVGSVGElement, options: DrawerOptions = {}): D
   }
 
   const resize = new ResizeObserver(() => {
-    if (scene) fit(scene, false, true)
+    if (scene) fit(scene, false, !scene.manual)
   })
   resize.observe(svg)
+
+  // ---------- export ----------
+
+  /**
+   * A standalone copy of the level: every color and font size is written on the element itself, so
+   * it looks the same in any program that opens SVG. Editing dots, selection and moving dots are left out.
+   */
+  const toSvg = (opts: { fontFace?: string } = {}): string => {
+    if (!scene) return ''
+    const keepPicked = picked
+    const keepMarked = marked
+    for (const key of picked) classFor(key, 'o-picked', false)
+    for (const key of marked) scene.items.get(key)?.el.classList.remove('o-mark')
+
+    const pad = 24
+    const b = scene.bounds
+    const width = Math.ceil(b.w + pad * 2)
+    const height = Math.ceil(b.h + pad * 2)
+    const out = document.createElementNS(NS, 'svg')
+    setAttrs(out, { xmlns: NS, viewBox: `${b.x - pad} ${b.y - pad} ${width} ${height}`, width: String(width), height: String(height) })
+    const defs = make('defs', {}, out)
+    if (opts.fontFace) make('style', {}, defs).textContent = opts.fontFace
+    for (const marker of svg.querySelectorAll('marker')) {
+      const twin = marker.cloneNode(true) as Element
+      twin.querySelector('path')!.setAttribute('fill', plainColor(getComputedStyle(marker.querySelector('path')!).fill))
+      twin.querySelector('path')!.removeAttribute('class')
+      defs.append(twin)
+    }
+    make('rect', { x: String(b.x - pad), y: String(b.y - pad), width: String(width), height: String(height), fill: plainColor(getComputedStyle(svg).backgroundColor) }, out)
+
+    const skip = /\bo-(handle|hit|ring|dots|gone|draft|lasso)\b/
+    const painted = new Set(['path', 'rect', 'circle', 'text'])
+    const copy = (live: globalThis.Node, into: Element) => {
+      if (live.nodeType === 3) return void into.append(live.textContent ?? '')
+      if (!(live instanceof SVGElement) || live.tagName === 'title') return
+      if (skip.test(live.getAttribute('class') ?? '') || (live.tagName === 'path' && !live.getAttribute('d'))) return
+      const el = document.createElementNS(NS, live.tagName)
+      for (const attr of live.attributes) if (!/^(class|style|data-)/.test(attr.name)) el.setAttribute(attr.name, attr.value)
+      // Browsers write translate(60px, 0px) back as translate(60px), so the second number may be missing.
+      const moved = /translate\(([-\d.e]+)px(?:,\s*([-\d.e]+)px)?\)/.exec(live.style.transform)
+      if (moved) el.setAttribute('transform', `translate(${moved[1]} ${moved[2] ?? 0})`)
+      if (painted.has(live.tagName)) {
+        const cs = getComputedStyle(live)
+        el.setAttribute('fill', plainColor(cs.fill))
+        if (live.tagName === 'text') {
+          setAttrs(el, { 'font-family': cs.fontFamily, 'font-size': cs.fontSize, 'font-weight': cs.fontWeight })
+        } else {
+          el.setAttribute('stroke', plainColor(cs.stroke))
+          el.setAttribute('stroke-width', cs.strokeWidth.replace('px', ''))
+          if (cs.strokeDasharray !== 'none') el.setAttribute('stroke-dasharray', cs.strokeDasharray.replace(/px/g, ''))
+          if (cs.strokeLinecap !== 'butt') el.setAttribute('stroke-linecap', cs.strokeLinecap)
+        }
+      }
+      into.append(el)
+      for (const child of live.childNodes) copy(child, el)
+    }
+    for (const layer of [scene.layers.links, scene.layers.nodes, scene.layers.tags]) copy(layer, out)
+
+    for (const key of keepPicked) classFor(key, 'o-picked', true)
+    for (const key of keepMarked) scene.items.get(key)?.el.classList.add('o-mark')
+    return '<?xml version="1.0" encoding="UTF-8"?>\n' + new XMLSerializer().serializeToString(out)
+  }
 
   return {
     show(level, how = 'update') {
@@ -917,12 +1074,23 @@ export function createDrawer(svg: SVGSVGElement, options: DrawerOptions = {}): D
       if (scene) fit(scene, true, true)
     },
 
+    zoom(factor) {
+      const r = svg.getBoundingClientRect()
+      zoomAt(factor, r.left + r.width / 2, r.top + r.height / 2, true)
+    },
+
+    toSvg,
+
     destroy() {
       resize.disconnect()
       document.fonts?.removeEventListener('loadingdone', refont)
       renaming?.remove()
       svg.removeEventListener('pointerdown', onDown)
       svg.removeEventListener('dblclick', onDouble)
+      svg.removeEventListener('mousedown', onMiddle)
+      svg.removeEventListener('wheel', onWheel)
+      removeEventListener('keydown', onSpace)
+      removeEventListener('keyup', onSpace)
       svg.replaceChildren()
       svg.classList.remove('ordigram', 'o-editable')
     },
@@ -934,6 +1102,31 @@ function colorOf(value: string | true | undefined): Paint | null {
   if (PALETTE[value]) return PALETTE[value]
   if (!/^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(value)) return null
   return { fill: `color-mix(in srgb, ${value} 16%, #ffffff)`, line: `color-mix(in srgb, ${value} 60%, #ffffff)` }
+}
+
+/** A color other programs read: browsers may report mixed colors as color(srgb ...), so turn those into rgb(). */
+function plainColor(value: string): string {
+  const m = /^color\(srgb ([\d.e-]+) ([\d.e-]+) ([\d.e-]+)(?: \/ ([\d.e-]+))?\)$/.exec(value)
+  if (!m) return value
+  const [r, g, b] = [m[1], m[2], m[3]].map(v => Math.round(Math.min(1, Math.max(0, Number(v))) * 255))
+  return m[4] && Number(m[4]) < 1 ? `rgba(${r}, ${g}, ${b}, ${m[4]})` : `rgb(${r}, ${g}, ${b})`
+}
+
+/** Draws an SVG file into a PNG image, `scale` times its size, so it stays sharp. */
+export async function svgToPng(svg: string, scale = 2): Promise<Blob> {
+  const url = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' }))
+  try {
+    const image = new Image()
+    image.src = url
+    await image.decode()
+    const canvas = document.createElement('canvas')
+    canvas.width = Math.ceil(image.naturalWidth * scale)
+    canvas.height = Math.ceil(image.naturalHeight * scale)
+    canvas.getContext('2d')!.drawImage(image, 0, 0, canvas.width, canvas.height)
+    return await new Promise((resolve, reject) => canvas.toBlob(blob => (blob ? resolve(blob) : reject(new Error('Could not make the PNG'))), 'image/png'))
+  } finally {
+    URL.revokeObjectURL(url)
+  }
 }
 
 function make<K extends keyof SVGElementTagNameMap>(tag: K, attrs: Record<string, string>, parent?: Element): SVGElementTagNameMap[K] {
@@ -1016,6 +1209,8 @@ ${s} .o-handle-dot { fill: var(--o-paper); stroke: var(--o-mark); stroke-width: 
 ${s} .o-handle:hover .o-handle-dot, ${s} .o-handle.o-side .o-handle-dot { fill: var(--o-mark); r: 5.5px; }
 ${s}:not(.o-editable) .o-handle, ${s} .o-out .o-handle, ${s}.o-dragging .o-handle { display: none; }
 ${s} .o-node:hover .o-handle, ${s} .o-picked .o-handle, ${s} .o-target .o-handle { opacity: 1; }
+${s}.o-pannable, ${s}.o-pannable * { cursor: grab !important; }
+${s}.o-panning, ${s}.o-panning * { cursor: grabbing !important; }
 ${s} .o-lasso { fill: color-mix(in srgb, var(--o-mark) 8%, transparent); stroke: var(--o-mark); stroke-width: 1; stroke-dasharray: 4 3; pointer-events: none; }
 ${s}.o-editable .o-node:not(.o-out) { cursor: grab; }
 ${s}.o-dragging, ${s}.o-dragging * { cursor: grabbing !important; }
