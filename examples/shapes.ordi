@@ -1,0 +1,23 @@
+# Every shape and color the basic drawer knows.
+
+box "box"
+round "round" shape=round
+circle "circle" shape=circle
+diamond "diamond" shape=diamond
+cylinder "cylinder" shape=cylinder
+person "person" shape=person
+text "just text" shape=text
+long "A long label wraps onto more lines by itself"
+two "Two lines,\nby hand"
+fixed "size=220x90" size=220x90
+
+colors "Colors"
+  blue "blue" color=blue
+  green "green" color=green
+  red "red" color=red
+  gold "gold" color=gold
+  purple "purple" color=purple
+  grey "grey" color=grey
+  hex "#e0a800" color=#e0a800
+  blue -> green flow
+  green -> red

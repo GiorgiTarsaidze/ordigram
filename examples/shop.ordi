@@ -1,0 +1,30 @@
+# An online shop.
+# Click a stacked box to open it. Labels with › open arrows.
+
+customer "Customer" shape=person
+web "Web app"
+api "API"
+  gateway "API gateway"
+  auth "Auth service"
+  orders "Orders service"
+    check "Check cart"
+    pay "Take payment"
+    save "Save order"
+    check -> pay
+    pay -> save
+  gateway -> auth "verify token"
+  gateway -> orders "place order" flow
+db "Orders DB" shape=cylinder color=blue
+stripe "Stripe" shape=round color=gold
+mail "Email service" color=purple
+
+customer -> web "browses" flow
+web -> api "HTTPS" flow
+  cdn "CDN"
+  lb "Load balancer"
+  web -> cdn flow
+  cdn -> lb flow
+  lb -> api flow
+api/orders/save -> db "SQL" flow
+api/orders/pay -> stripe "charge"
+api/orders -> mail "order placed"
