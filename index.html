@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Ordigram playground</title>
+    <link rel="icon" href="data:," />
+  </head>
+  <body>
+    <header class="bar">
+      <strong class="brand">ordigram</strong>
+      <nav class="crumbs" id="crumbs" aria-label="Where you are"></nav>
+      <label class="pick">Example <select id="example"></select></label>
+      <button id="reset" type="button">Reset</button>
+    </header>
+    <main class="split">
+      <section class="code">
+        <div class="editor">
+          <div class="gutter" id="gutter" aria-hidden="true"></div>
+          <div class="area">
+            <div class="mark" id="mark" aria-hidden="true"></div>
+            <pre class="paint" id="paint" aria-hidden="true"></pre>
+            <textarea id="src" spellcheck="false" wrap="off" autocapitalize="off" autocomplete="off" aria-label="Diagram text"></textarea>
+          </div>
+        </div>
+        <ul class="problems" id="problems"></ul>
+      </section>
+      <section class="view">
+        <svg id="canvas" role="img" aria-label="Diagram"></svg>
+        <p class="hint">Click a stacked box to open it · Esc goes back · Hover to find its line</p>
+      </section>
+    </main>
+    <footer class="status" id="status"></footer>
+    <script type="module" src="/playground/main.ts"></script>
+  </body>
+</html>
