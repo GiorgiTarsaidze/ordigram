@@ -193,6 +193,19 @@ addEventListener('keydown', e => {
   }
 })
 
+// ---------- text panel ----------
+
+const split = document.querySelector('.split') as HTMLElement
+const codeToggle = byId('code-toggle')
+function showCode(show: boolean) {
+  split.classList.toggle('no-code', !show)
+  codeToggle.setAttribute('aria-pressed', String(show))
+}
+codeToggle.addEventListener('click', () => showCode(split.classList.contains('no-code')))
+addEventListener('keydown', e => {
+  if (e.key === '\\' && !e.ctrlKey && !e.metaKey && !(e.target as Element).matches('textarea, input, select')) showCode(split.classList.contains('no-code'))
+})
+
 // ---------- zoom ----------
 
 byId('zoom-in').addEventListener('click', () => drawer.zoom(1.25))

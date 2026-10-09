@@ -79,6 +79,8 @@ select, .bar button:not(.crumbs button) {
   grid-template-columns: minmax(320px, 38%) 1fr;
   min-height: 0;
 }
+.split.no-code { grid-template-columns: 0 1fr; }
+.split.no-code .code { visibility: hidden; border-right: 0; overflow: hidden; }
 .code {
   display: flex;
   flex-direction: column;
